@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "pytest-publish"
-version = "0.9"
+version = "1.0.0"
 description = ""
 authors = ["Yuvalino <yuvalino@gmail.com>"]
 readme = "README.md"
