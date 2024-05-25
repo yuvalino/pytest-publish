@@ -1,0 +1,34 @@
+[tool.poetry]
+name = "pytest-publish"
+version = "0.9"
+description = ""
+authors = ["Yuvalino <yuvalino@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.8"
+pytest = "^8.0.0"
+requests = "^2.32.2"
+
+
+[tool.poetry.group.dev.dependencies]
+flask = "^3.0.3"
+werkzeug = "^3.0.3"
+pytest-xdist = "^3.6.1"
+pre-commit = "^3.5"
+types-requests = "^2.32.0.20240523"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.plugins]
+pytest11 = { pytest_publish = "pytest_publish"}
+
+[tool.pytest.ini_options]
+filterwarnings = ["ignore::_pytest.warning_types.PytestUnknownMarkWarning"]
+
+[tool.ruff]
+line-length = 88
+# pyflakes, pycodestyle, isort
+lint.select = ["F", "E", "W", "I001"]
