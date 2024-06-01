@@ -92,7 +92,7 @@ def test_basic():
     assert res["result"] == "pass"
     assert res["nodeid"] == "test.py::_test_basic"
     assert res["xdist_worker"] is None
-    assert "excinfo" not in res
+    assert res["excinfo"] is None
 
 
 @pytest.mark.edgecase
@@ -116,7 +116,7 @@ def test_edgecase():
     assert fail["excinfo"]["type"] == "AssertionError"
     assert fail["excinfo"]["value"] == "assert False"
     assert "in _test_fail" in fail["excinfo"]["traceback"][-1]
-    assert "assert(False)" in fail["excinfo"]["traceback"][-1]
+    assert "assert False" in fail["excinfo"]["traceback"][-1]
 
     assert skip["type"] == "result"
     assert skip["result"] == "skip"
@@ -156,4 +156,4 @@ def test_xdist():
     assert res["result"] == "pass"
     assert res["nodeid"].startswith("test.py::_test_xdist[")
     assert res["xdist_worker"] in ["gw0", "gw1"]
-    assert "excinfo" not in res
+    assert res["excinfo"] is None
