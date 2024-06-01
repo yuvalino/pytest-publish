@@ -6,33 +6,74 @@ Useful for live applications running on top of pytest (UI, logstash, etc).
 
 ## Usage
 
-Only requirement is a target REST API endpoint to report test results to, e.g:
+There are 2 switches which can be turned on, each run every time a test has finished running:
+
+1. `--publish <url>` to publish JSON reports to REST API.
+2. `--pubdir <path>` to write results to filesystem.
+
+
+### --publish
+
+Run test like this:
 ```sh
 $ pytest --publish http://localhost:7777/test-update
 ```
 
 On each test result, an HTTP POST request with the following JSON data will be submitted:
 ```python
-{
-    "type": "result",
-    "result": ...,  # pass|fail|skip
-    "nodeid": "<test item nodeid>",  # includes test name
-    "start_time": 0.0,  # start time epoch seconds
-    "stop_time": 0.1,   # end time epoch seconds
-    "duration": 0.1,    # test duration seconds
-    "stdout": "hello, world!",  # captured stdout
-    "stderr": "WARN: ...", # captured stderr
-    "log": "ERROR root:0:0 bad log",  # captured logs (logging lib)
-    "xdist_worker": None or "gw0",  # worker name if running on xdist or None otherwise
+# from pytest_publish.py
+@dataclass_json
+@dataclass
+class TestResult:
+    @dataclass_json
+    @dataclass
+    class ExcInfo:
+        type: str
+        value: str
+        traceback: list[str]
 
-    # only if "result" != "pass":
-    "excinfo": {
-        "type": "AssertionError", # exception type name
-        "value": "assert False", # exception value string
-        "traceback": [  # traceback lines
-            "File .. in ..:\n  func()",
-            "File .. in ..:\n  assert False"
-        ]
-    }
-}
+    type: str
+    result: str  # "pass", "skip", "fail"
+    nodeid: str
+    start_time: float
+    stop_time: float
+    duration: float
+    stdout: str
+    stderr: str
+    log: str
+    xdist_dist: str | None  # only with xdist
+    xdist_worker: str | None  # only with xdist
+    xdist_scope: str | None  # only with xdist
+    excinfo: ExcInfo | None = None  # only if "skip" or "fail"
+
 ```
+
+### --pubdir
+
+Run test like this:
+```sh
+$ pytest --pubdir /tmp/a
+```
+
+On each test result, the following directory tree will be created:
+```sh
+/tmp/a
+/tmp/a/test_a
+/tmp/a/test_a/.lock
+/tmp/a/test_a/count
+/tmp/a/test_a/0.pass               # <index>.<result> 
+/tmp/a/test_a/0.pass/brief.txt     # textual description of result 
+/tmp/a/test_a/0.pass/result.json   # same data as --publish
+/tmp/a/test_a/0.pass/exception.txt # only if "skip" or "fail"
+/tmp/a/test_a/0.pass/stdout.txt    # only if any stdout
+/tmp/a/test_a/0.pass/stderr.txt    # only if any stderr
+/tmp/a/test_a/0.pass/log.txt       # only if any logs
+```
+
+**NOTE:** If xdist's `--dist loadgroup` is run with xdist, the directory tree will look like this:
+```sh
+/tmp/a/<scope>
+/tmp/a/<scope>/<test_name>
+/tmp/a/<scope>/<test_name>/count
+```
+Notice the addition of the `<scope>` to the directory tree above.
