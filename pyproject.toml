@@ -10,14 +10,15 @@ python = "^3.8"
 pytest = "^8.0.0"
 requests = "^2.32.2"
 dataclasses-json = "^0.6.6"
+filelock = "^3.14.0"
 
 
 [tool.poetry.group.dev.dependencies]
 flask = "^3.0.3"
 werkzeug = "^3.0.3"
-pytest-xdist = "^3.6.1"
 pre-commit = "^3.5"
 types-requests = "^2.32.0.20240523"
+pytest-xdist = "^3.6.1"
 
 [build-system]
 requires = ["poetry-core"]
