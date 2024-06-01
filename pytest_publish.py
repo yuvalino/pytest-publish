@@ -34,7 +34,7 @@ class TestResult:
     xdist_dist: str | None  # only with xdist
     xdist_worker: str | None  # only with xdist
     xdist_scope: str | None  # only with xdist
-    excinfo: ExcInfo | None = None  # not None if result is "skip" or "fail"
+    excinfo: ExcInfo | None = None  # only if "skip" or "fail"
 
 
 @hookimpl()
