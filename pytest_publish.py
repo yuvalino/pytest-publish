@@ -9,7 +9,7 @@ from dataclasses import dataclass
 import requests
 from dataclasses_json import dataclass_json
 from filelock import FileLock
-from pytest import CallInfo, Item, Parser, TestReport, hookimpl, skip
+from pytest import CallInfo, Config, Item, Parser, TestReport, hookimpl, skip
 
 
 @dataclass_json
@@ -25,6 +25,7 @@ class TestResult:
     type: str
     result: str  # "pass", "skip", "fail"
     nodeid: str
+    name: str
     start_time: float
     stop_time: float
     duration: float
@@ -34,6 +35,7 @@ class TestResult:
     xdist_dist: str | None  # only with xdist
     xdist_worker: str | None  # only with xdist
     xdist_scope: str | None  # only with xdist
+    pubdir_path: str | None  # only with --pubdir
     excinfo: ExcInfo | None = None  # only if "skip" or "fail"
 
 
@@ -53,61 +55,22 @@ def pytest_addoption(parser: Parser):
         help="directory to post test results",
     )
 
-
-def create_result(item: Item, call: CallInfo, report: TestReport) -> TestResult:
-    result = "pass"
-    if call.excinfo:
-        result = "skip" if call.excinfo.errisinstance(skip.Exception) else "fail"
-
-    # xdist-specific
-    xdist_worker = os.environ.get("PYTEST_XDIST_WORKER")
-    xdist_scope: str | None = None
-    xdist_dist: str | None = None
-    if xdist_worker:
-        xdist_dist = item.config.workerinput["dist"]
-        if xdist_dist == "loadgroup":
-            from xdist.scheduler.loadgroup import LoadGroupScheduling
-
-            xdist_scope = LoadGroupScheduling._split_scope(None, item.nodeid)
-
-    data = TestResult(
-        type="result",
-        result=result,
-        nodeid=item.nodeid,
-        start_time=call.start,
-        stop_time=call.stop,
-        duration=call.duration,
-        stdout=report.capstdout,
-        stderr=report.capstderr,
-        log=report.caplog,
-        xdist_dist=xdist_dist,
-        xdist_worker=xdist_worker,
-        xdist_scope=xdist_scope,
+    parser.addoption(
+        "--pubdir-filter",
+        action="store",
+        choices=["all", "bad", "fail"],
+        default="bad",
+        help="filter which tests are written to directory",
     )
 
-    if result != "pass":
-        data.excinfo = TestResult.ExcInfo(
-            type=call.excinfo.type.__name__,
-            value=str(call.excinfo.value),
-            traceback=traceback.format_tb(call.excinfo.tb),
-        )
 
-    return data
-
-
-def pubdir(nodeid: str, pubdir_path: str, result: TestResult):
-    # add scope dir (and potentially remove scope from `nodeid`)
-    if result.xdist_scope:
-        pubdir_path = os.path.join(pubdir_path, result.xdist_scope)
-        scope_suffix = None
-        if result.xdist_dist == "loadgroup":
-            scope_suffix = f"@{result.xdist_scope}"
-
-        if scope_suffix and nodeid.endswith(scope_suffix):
-            nodeid = nodeid[: -len(scope_suffix)]
-
-    # From this point forward, `pubdir_path` is `pubdir[/xdist_scope]/nodeid`
-    pubdir_path = os.path.join(pubdir_path, nodeid)
+def generate_test_pubdir_path(
+    pubdir_path: str, test_name: str, result: str, xdist_scope: str | None
+):
+    if xdist_scope:
+        pubdir_path = os.path.join(pubdir_path, xdist_scope)
+    # TODO: dual test names
+    pubdir_path = os.path.join(pubdir_path, test_name)
 
     # Get unique test index (with filelock to support parallel execution of test)
     count = 0
@@ -122,11 +85,83 @@ def pubdir(nodeid: str, pubdir_path: str, result: TestResult):
         with open(count_file, "w") as w:
             w.write(str(count + 1))
 
-    test_path = os.path.join(pubdir_path, f"{count}.{result.result}")
-    os.makedirs(test_path)
+    return os.path.join(pubdir_path, f"{count}.{result}")
+
+
+def should_pubdir_test(config: Config, result: str) -> bool:
+    pubdir_filter = config.getoption("pubdir_filter")
+    if pubdir_filter == "all":
+        return True
+    if pubdir_filter == "fail":
+        return result == "fail"
+    return result != "pass"
+
+
+def create_result(
+    item: Item, call: CallInfo, report: TestReport, pubdir_path: str | None
+) -> TestResult:
+    result = "pass"
+    if call.excinfo:
+        result = "skip" if call.excinfo.errisinstance(skip.Exception) else "fail"
+
+    nodeid: str = item.nodeid
+    name: str = nodeid.split("::")[-1]
+
+    # xdist-specific
+    xdist_worker = os.environ.get("PYTEST_XDIST_WORKER")
+    xdist_scope: str | None = None
+    xdist_dist: str | None = None
+    if xdist_worker:
+        xdist_dist = item.config.workerinput["dist"]
+        if xdist_dist == "loadgroup":
+            from xdist.scheduler.loadgroup import LoadGroupScheduling
+
+            xdist_scope = LoadGroupScheduling._split_scope(None, nodeid)
+            name = name[: name.rfind("@")]
+
+    # set destination file in pubdir
+    test_pubdir_path = None
+    if pubdir_path:
+        # NOTE: always generate so we write to `count` file
+        path = generate_test_pubdir_path(pubdir_path, name, result, xdist_scope)
+        if should_pubdir_test(item.config, result):
+            test_pubdir_path = path
+
+    data = TestResult(
+        type="result",
+        result=result,
+        nodeid=nodeid,
+        name=name,
+        start_time=call.start,
+        stop_time=call.stop,
+        duration=call.duration,
+        stdout=report.capstdout,
+        stderr=report.capstderr,
+        log=report.caplog,
+        xdist_dist=xdist_dist,
+        xdist_worker=xdist_worker,
+        xdist_scope=xdist_scope,
+        pubdir_path=test_pubdir_path,
+    )
+
+    if result != "pass":
+        data.excinfo = TestResult.ExcInfo(
+            type=call.excinfo.type.__name__,
+            value=str(call.excinfo.value),
+            traceback=traceback.format_tb(call.excinfo.tb),
+        )
+
+    return data
+
+
+def pubdir(result: TestResult):
+    if not result.pubdir_path:
+        return
+
+    os.makedirs(result.pubdir_path, exist_ok=True)
 
     # Textual file for test result
-    with open(os.path.join(test_path, "brief.txt"), "w") as w:
+    with open(os.path.join(result.pubdir_path, "brief.txt"), "w") as w:
 
         def _print(str: str, file=None):
             for f in [w] + ([] if not file else [file]):
@@ -143,7 +178,7 @@ def pubdir(nodeid: str, pubdir_path: str, result: TestResult):
             )
 
         _print(_header("general test info"))
-        _print(f"test: {nodeid}")
+        _print(f"test: {result.nodeid}")
         if result.xdist_scope:
             _print(f"xdist-scope: {result.xdist_scope}")
         _print(f"result: {result.result}")
@@ -155,7 +190,7 @@ def pubdir(nodeid: str, pubdir_path: str, result: TestResult):
 
         if result.excinfo:
             _print(_header("exception"))
-            with open(os.path.join(test_path, "exception.txt"), "w") as w2:
+            with open(os.path.join(result.pubdir_path, "exception.txt"), "w") as w2:
                 _print("".join(result.excinfo.traceback), file=w2)
                 if result.excinfo.value:
                     _print(f"{result.excinfo.type}: {result.excinfo.value}", file=w2)
@@ -164,20 +199,20 @@ def pubdir(nodeid: str, pubdir_path: str, result: TestResult):
 
         if result.stdout:
             _print(_header("stdout"))
-            with open(os.path.join(test_path, "stdout.txt"), "w") as w2:
+            with open(os.path.join(result.pubdir_path, "stdout.txt"), "w") as w2:
                 _print(result.stdout, file=w2)
 
         if result.stderr:
             _print(_header("stderr"))
-            with open(os.path.join(test_path, "stderr.txt"), "w") as w2:
+            with open(os.path.join(result.pubdir_path, "stderr.txt"), "w") as w2:
                 _print(result.stderr, file=w2)
 
         if result.log:
             _print(_header("log"))
-            with open(os.path.join(test_path, "log.txt"), "w") as w2:
+            with open(os.path.join(result.pubdir_path, "log.txt"), "w") as w2:
                 _print(result.log, file=w2)
 
-    with open(os.path.join(test_path, "result.json"), "w") as w:
+    with open(os.path.join(result.pubdir_path, "result.json"), "w") as w:
         w.write(json.dumps(result.to_dict(), indent=4))  # type: ignore[attr-defined]
 
 
@@ -194,25 +229,12 @@ def pytest_runtest_makereport(item: Item, call: CallInfo):
     if not publish_url and not pubdir_path:
         return
 
-    result = create_result(item, call, report)
+    result = create_result(item, call, report, pubdir_path)
+
+    pubdir(result)
 
     if publish_url:
         requests.post(publish_url, json=result.to_dict())  # type: ignore[attr-defined]
-
-    item.session.items
-
-    if pubdir_path:
-        # calculate if long or short nodeid
-        # NOTE: can be cached to save time
-        nodeid = result.nodeid.split("::")[-1]
-        if any(
-            x
-            for x in item.session.items
-            if x.nodeid.endswith(nodeid) and x.nodeid != result.nodeid
-        ):
-            nodeid = result.nodeid
-
-        pubdir(nodeid, pubdir_path, result)
 
 
 @hookimpl(optionalhook=True)
